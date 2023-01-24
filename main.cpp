@@ -1,327 +1,259 @@
 #include <iostream>
-#include <string>
 #include <unordered_map>
-#include <vector>
+#include <string>
 #include <algorithm>
+#include <vector>
 #include <locale>
 #include <functional>
 
-//сложность обращения к следующей вершине O(1) тк хеш-таблица детей
-struct Node {
-    std::wstring prefix;
-    std::unordered_map<wchar_t, Node*> children;
-    bool end_of_word;
-
-    Node() {}
-
-    Node(std::wstring word_, bool end_of_word_) : prefix(word_), end_of_word(end_of_word_) {}
-
-    bool operator==(const Node& rhs) const {
-        return prefix == rhs.prefix && children == rhs.children && end_of_word == rhs.end_of_word;
-    }
+struct node {
+	std::unordered_map <wchar_t, node*> _children;
+	std::wstring _data;
+	bool _is_end = false;
+	node() = default;
+	node(std::wstring str, bool is_end) :_data(str), _is_end(is_end) {}
 };
 
-class Trie {
-    Node* root = new Node(std::wstring(), false);
 
-    int max_prefix(const std::wstring& word1, const std::wstring& word2);
-
-    void split(Node& current_node, std::wstring& word, int index);
-
-    //метод поиска подходящих исправлений по сжатому префиксному дереву
-    // сложность O(n^2*k)
-    //n- длина слова
-    //k-мощность
-    void trie_travel(std::wstring word, bool error, std::wstring code,
-        int index, Node& node, std::vector<std::wstring>& answer);
-
-    std::wstring substr(const std::wstring& word, int pos, int length = -1);
-
-    void check_error(Node& node, std::wstring word, int index, int offset, std::wstring code,
-        bool error, std::vector<std::wstring>& answer, std::wstring check_word);
-
-    void destruct(Node* current_node);
+class trie {
+	node* root = nullptr;
 
 public:
-    ~Trie();
 
-    std::vector<std::wstring> correction(std::wstring& word, std::locale& loc);
+	~trie()
+	{
+		destruct(root);
+	}
 
-    //метод добавления слова в дерево
-    // сложность O(n)
-    //находим место в дереве за одно последовательное считывание слова
-    void add(std::wstring& word, std::locale& loc);
+	//добавление строки в дерево
+	//n- длина входногго слова
+	// O(n)
+	// ищем среди ключей у детей первый символ строки, если нашли ,ищем максимальный префикс 
+	// уменьшим слово на длину префикса и пойдем дальше рекурсивно
+	//поиск среди ключей у детей происходит за константу, тк Unordered_map (ключ-первый символ префикса)
+	void add(std::wstring str, std::locale& loc, node* it = nullptr) {
+		std::transform(str.begin(), str.end(), str.begin(),
+			std::bind(std::tolower<wchar_t>,
+				std::placeholders::_1,
+				std::cref(loc)));
 
-    //метод поиска слова
-    //сложность O(n)
-    //проходим по дереву и ищем наше слово,
-    //на каждом уровне поиск префикса за константу тк хеш_таблица
-    bool find(std::wstring& word, std::locale& loc);
+		if (root == nullptr) {
+			root = new node();
+		}
+		auto curr = root;
+		if (it != nullptr) {
+			curr = it;
+		}
+		std::wstring substr;
+
+
+
+		//if found
+		if (curr->_children.find(str[0]) != curr->_children.end()) {
+
+			substr += str[0];
+
+			//find max-length prefix
+			for (int i = 1; curr->_children[str[0]]->_data.find(substr) == 0; ++i) {
+				substr += str[i];
+			}
+			substr.pop_back();
+			//если данные узла являются подстрокой нашего слова, то спускаемся ниже рекурсивно
+			if (substr.find(curr->_children[str[0]]->_data) == 0) {
+				str.erase(0, curr->_children[substr[0]]->_data.length());
+				return add(str, loc, curr->_children[substr[0]]);
+			}
+
+			//новый узел сверху
+			node* temp = new node(substr, false);
+
+			curr->_children[str[0]]->_data.erase(0, substr.length());
+
+			temp->_children.emplace(curr->_children[str[0]]->_data[0], curr->_children[str[0]]);
+
+			curr->_children[str[0]] = temp;
+
+			str.erase(0, substr.length());
+			if (str.empty()) {
+				temp->_is_end = true;
+			}
+			return add(str, loc, curr->_children[substr[0]]);
+
+		}
+
+		curr->_children.emplace(str[0], new node(str, true));
+	}
+
+
+	//нужна для того, чтобы создать вектор ответов, вызывает check_error
+	std::vector<std::wstring> check_error(std::wstring str, std::locale& loc) {
+		std::transform(str.begin(), str.end(), str.begin(),
+			std::bind(std::tolower<wchar_t>,
+				std::placeholders::_1,
+				std::cref(loc)));
+		std::vector<std::wstring> vec;
+		check_word(str, vec);
+		std::sort(vec.begin(), vec.end());
+		return vec;
+	}
+
+
+
+	//проверка строки на принадлежность дереву
+	// Поиск префиксов за константу!!
+	//O(n) , просто будем проходить по префксам и если префикс такой есть, то спустимся в него и так до конца слова
+	//если хотя бы на одном уровне не нашли префис, вернем false
+	bool is_normal_string(std::wstring str, std::locale& loc) {
+		std::transform(str.begin(), str.end(), str.begin(),
+			std::bind(std::tolower<wchar_t>,
+				std::placeholders::_1,
+				std::cref(loc)));
+		auto curr = root;
+		wchar_t temp;
+		while (!str.empty() && curr->_children.find(str[0]) != curr->_children.end()) {
+			if (str.find(curr->_children[str[0]]->_data) == 0) {
+				temp = str[0];
+				str.erase(0, curr->_children[str[0]]->_data.length());
+				curr = curr->_children[temp];
+			}
+			else {
+				break;
+			}
+		}
+
+		if (str.empty() && curr->_is_end) {
+			return true;
+		}
+		return false;
+	}
+
+private:
+
+	//O(n*m*k) n-длина входного слова m-число вершин k-длина наибольшего префикса
+	//мы проходимя по префиксам, если расстояние левенштейна между префиксом и частью входной строки > 2, то выходим из ветки 
+	//если расстояние левенштейна между префиксом и частью входной строки 0 или 1, то спускаемя вниз
+	void check_word(std::wstring str, std::vector<std::wstring>& vec, node* it = nullptr, std::wstring answer = L"") {
+		auto curr = root;
+		if (it != nullptr) {
+			curr = it;
+		}
+		std::wstring temp_str = str.substr(0, answer.length());
+		if (dam_lev_dist(temp_str, answer) > 2) {
+			return;
+		}
+		if (curr->_is_end && dam_lev_dist(str, answer) == 1) {
+			if (std::find(vec.begin(), vec.end(), answer) == vec.end()) {
+				vec.push_back(answer);
+			}
+		}
+		for (auto temp : curr->_children) {
+			check_word(str, vec, temp.second, answer + temp.second->_data);
+		}
+	}
+
+
+	//Алгоритм Дамерау-Левенштейна
+	//O(n*m)  n,m - длины входных слов
+	// Считает расстояние Левенштейна
+	int dam_lev_dist(std::wstring A, std::wstring B) {
+		size_t n = A.length();
+		size_t m = B.length();
+		std::vector<std::vector<int>> d(n + 1, std::vector<int>(m + 1));
+		
+		int l_cost;
+		for (int i = 0; i <= n; i++) {
+			d[i][0] = i;
+		}
+		for (int j = 0; j <= m; j++) {
+			d[0][j] = j;
+		}
+
+		for (int i = 1; i <= n; i++) {
+			for (int j = 1; j <= m; j++) {
+				if (A[i - 1] == B[j - 1]) {
+					l_cost = 0;
+				}
+				else {
+					l_cost = 1;
+				}
+				d[i][j] = std::min(d[i - 1][j] + 1,std::min(d[i][j - 1] + 1,d[i - 1][j - 1] + l_cost));
+				if ((i > 1) && (j > 1) && (A[i - 1] == B[j - 2]) && (A[i - 2] == B[j - 1])) {
+					d[i][j] = std::min(d[i][j], d[i - 2][j - 2] + l_cost); 
+				}
+			}
+		}
+		return d[n][m];
+	}
+
+
+	void destruct(node* curr) {
+		if (curr != nullptr) {
+			for (auto temp : curr->_children) {
+				destruct(temp.second);
+			}
+			delete curr;
+		}
+	}
+
 };
-
-int Trie::max_prefix(const std::wstring& word1, const std::wstring& word2) {
-    int min_len = std::min(word1.length(), word2.length());
-    for (size_t i = 0; i < min_len; i++) {
-        if (word1[i] != word2[i]) {
-            return i;
-        }
-    }
-    return min_len;
-}
-
-Trie::~Trie() {
-    destruct(root);
-}
-void Trie::destruct(Node* current_node) {
-    if (current_node != nullptr) {
-        for (auto temp : current_node->children) {
-            destruct(temp.second);
-        }
-        delete current_node;
-    }
-}
-
-void Trie::split(Node& current_node, std::wstring& word, int index) {
-
-    int split = max_prefix(substr(word, index), current_node.prefix);
-    std::wstring equal_part = substr(current_node.prefix, 0, split);
-    Node* new_node = new Node(substr(current_node.prefix, split), current_node.end_of_word);
-    new_node->children = current_node.children;
-
-    current_node.children.clear();
-    current_node.children.emplace(current_node.prefix[split], new_node);
-
-    std::wstring word_split = substr(word, index + split);
-
-    if (!word_split.empty()) {
-        current_node.children[word_split[0]] = new Node(word_split, true);
-        current_node.end_of_word = false;
-    }
-    current_node.prefix = equal_part;
-}
-
-void Trie::trie_travel(std::wstring word, bool error, std::wstring code,
-    int index, Node& node, std::vector<std::wstring>& answer) {
-    std::wstring check_word = substr(word, index, node.prefix.length());
-    if (node.prefix == check_word) {
-        if (node.end_of_word && (word.length() == index + node.prefix.length()
-            || (word.length() == index + 1 + node.prefix.length() && !error))) {
-            answer.emplace_back(code + node.prefix);
-        }
-
-        for (auto& it : node.children) {
-            trie_travel(word, error, code + node.prefix, index + node.prefix.length(), *it.second, answer);
-        }
-        return;
-    }
-    if (error) {
-        return;
-    }
-    error = true;
-    int offset = max_prefix(node.prefix, check_word);
-    check_error(node, word, index, offset, code, error, answer, check_word);
-}
-
-std::wstring Trie::substr(const std::wstring& word, int pos, int length) {
-    if (pos >= word.length() || length == 0) {
-        return L"";
-    }
-    if (length == -1) {
-        return word.substr(pos);
-    }
-
-    if (pos + length - 1 < word.length()) {
-        return word.substr(pos, length);
-    }
-
-    return word.substr(pos);
-
-}
-
-void Trie::check_error(Node& node, std::wstring word, int index, int offset, std::wstring code,
-    bool error, std::vector<std::wstring>& answer, std::wstring check_word) {
-
-    //изменили 1 символ
-    bool replace_error = substr(node.prefix, offset + 1) == substr(check_word, offset + 1);
-
-    //чтобы не брать подстроку несколько раз
-    std::wstring buf = substr(node.prefix, offset + 1);
-
-    //пропустили 1 символ
-    bool delete_error = buf == substr(check_word, offset, buf.length());
-
-    buf = substr(node.prefix, offset);
-
-    //добавили 1 символ
-    bool insert_error = buf == substr(word, index + offset + 1, buf.length());
-
-    //транспозиция двух соседних символов
-    bool transpose_error = false;
-
-
-    if (word.length() > index + offset + 1 && offset == node.prefix.length() - 1
-        && word[index + offset + 1] == node.prefix[offset]) {
-        if (node.children.find(check_word[offset]) != node.children.end()) {
-            trie_travel(std::wstring(1, word[index + offset + 1]) + std::wstring(1, check_word[offset]) +
-                substr(word, index + offset + 2), error, code + node.prefix, 1,
-                *node.children[check_word[offset]], answer);
-        }
-    }
-    else if (offset + 1 < check_word.length() && std::wstring(1, check_word[offset + 1]) +
-        std::wstring(1, check_word[offset]) +
-        substr(check_word, offset + 2) == substr(node.prefix, offset)) {
-        transpose_error = true;
-    }
-
-    if (delete_error) {
-        if ((index - 1 + node.prefix.length() == word.length()) && node.end_of_word) {
-            answer.push_back(code + node.prefix);
-        }
-
-        for (auto& it : node.children) {
-            trie_travel(word, error, code + node.prefix, index + node.prefix.length() - 1, *it.second, answer);
-        }
-    }
-
-    if (insert_error) {
-        if (index + node.prefix.length() + 1 == word.length() && node.end_of_word) {
-            answer.push_back(code + node.prefix);
-        }
-        for (auto& it : node.children) {
-            trie_travel(word, error, code + node.prefix, index + node.prefix.length() + 1, *it.second, answer);
-        }
-    }
-
-    if (transpose_error || replace_error) {
-        if (index + node.prefix.length() == word.length() && node.end_of_word) {
-            answer.push_back(code + node.prefix);
-        }
-
-        for (auto& it : node.children) {
-            trie_travel(word, error, code + node.prefix, index + node.prefix.length(), *it.second, answer);
-        }
-    }
-}
-
-std::vector<std::wstring> Trie::correction(std::wstring& word, std::locale& loc) {
-    std::vector<std::wstring> compare;
-    std::transform(word.begin(), word.end(), word.begin(),
-        std::bind(std::tolower<wchar_t>,
-            std::placeholders::_1,
-            std::cref(loc)));
-    for (auto& it : root->children) {
-        trie_travel(word, false, L"", 0, *it.second, compare);
-    }
-    return compare;
-}
-
-
-void Trie::add(std::wstring& word, std::locale& loc) {
-    if (word.empty()) {
-        return;
-    }
-    std::transform(word.begin(), word.end(), word.begin(),
-        std::bind(std::tolower<wchar_t>,
-            std::placeholders::_1,
-            std::cref(loc)));
-
-    int index = 0;
-    Node* current_node = root;
-    bool compare = false;
-    while (index < word.length() && current_node->children.find(word[index])
-        != current_node->children.end()) {
-        compare = false;
-        current_node = current_node->children[word[index]];
-        if (current_node->prefix == substr(word, index, current_node->prefix.length())) {
-            compare = true;
-            index += current_node->prefix.length();
-            continue;
-        }
-        break;
-    }
-    if (index == word.length()) {
-        current_node->end_of_word = true;
-        return;
-    }
-    if (current_node->children.find(word[index]) == current_node->children.end()
-        && (compare || current_node == root)) {
-        current_node->children[word[index]] = new Node(substr(word, index), true);
-        return;
-    }
-    split(*current_node, word, index);
-}
-
-bool Trie::find(std::wstring& word, std::locale& loc) {
-    std::transform(word.begin(), word.end(), word.begin(),
-        std::bind(std::tolower<wchar_t>,
-            std::placeholders::_1,
-            std::cref(loc)));
-    if (root->children.empty()) {
-        return false;
-    }
-    int index = 0;
-    Node* current_node = root;
-
-    while (index < word.length() && current_node->children.find(word[index]) != current_node->children.end()) {
-        current_node = current_node->children[word[index]];
-        int len_temp = current_node->prefix.length();
-        if (current_node->prefix == substr(word, index, len_temp)) {
-            index += len_temp;
-            continue;
-        }
-        break;
-    }
-    return index == word.length() && current_node->end_of_word;
-}
-
 
 int main() {
 
-    std::ios_base::sync_with_stdio(false);
-    std::locale loc{ "" };
-    std::wcin.imbue(loc);
-    std::wcout.imbue(loc);
+	std::ios_base::sync_with_stdio(false);
+	std::locale loc{ "" };
+	std::wcin.imbue(loc);
+	std::wcout.imbue(loc);
 
-    Trie b;
-    int words = 0;
-    std::wstring line;
-    std::getline(std::wcin, line);
-    int count = std::stoi(line);
-    while (std::getline(std::wcin, line)) {
-        std::wstring copy_with_upper = line;
 
-        std::transform(line.begin(), line.end(), line.begin(),
-            std::bind(std::tolower<wchar_t>,
-                std::placeholders::_1,
-                std::cref(loc)));
 
-        if (line.empty()) {
-            continue;
-        }
-        if (words < count) {
-            b.add(line, loc);
-            words++;
-        }
-        else {
-            std::vector<std::wstring> answer = b.correction(line, loc);
-            if (b.find(line, loc)) {
-                std::wcout << copy_with_upper << " - ok\n";
-                continue;
-            }
-            if (answer.empty()) {
-                std::wcout << copy_with_upper << " -?\n";
-                continue;
-            }
-            if (answer.size() == 1) {
-                std::wcout << copy_with_upper << " -> " << answer[0] << "\n";
-                continue;
-            }
-            std::sort(answer.begin(), answer.end());
-            std::wcout << copy_with_upper << " -> " << answer[0];
-            for (size_t i = 1; i < answer.size(); i++) {
-                std::wcout << ", " << answer[i];
-            }
-            std::wcout << std::endl;
-        }
-    }
+	trie t;
+	int count;
+	std::wstring str;
+	std::getline(std::wcin, str);
+	count = std::stoi(str);
+	for (size_t j = 0; j < count; j++)
+	{
+		std::getline(std::wcin, str);
+		t.add(str, loc);
+	}
+	while (std::getline(std::wcin, str)) {
+		std::wstring copy_with_upper = str;
+
+		std::transform(str.begin(), str.end(), str.begin(),
+			std::bind(std::tolower<wchar_t>,
+				std::placeholders::_1,
+				std::cref(loc)));
+		if (str.empty()) {
+			continue;
+		}
+		if (count == 0) {
+			std::wcout << copy_with_upper << " -?" << std::endl;
+			continue;
+		}
+		if (t.is_normal_string(str, loc)) {
+			std::wcout << copy_with_upper << " - ok" << std::endl;
+		}
+		else {
+
+			std::vector<std::wstring> vec = t.check_error(str, loc);
+
+			if (vec.empty()) {
+				std::wcout << copy_with_upper << " -?" << std::endl;
+			}
+			else {
+
+				std::wcout << copy_with_upper << " -> ";
+				for (size_t i = 0; i < vec.size(); i++)
+				{
+					if (i == 0) {
+						std::wcout << vec[i];
+					}
+					else {
+						std::wcout << ", " << vec[i];
+					}
+				}
+				std::wcout << "\n";
+			}
+		}
+	}
 }
